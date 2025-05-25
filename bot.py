@@ -11,7 +11,7 @@ import base58
 
 # Configuration
 BOT_TOKEN = "7808692081:AAHirWMkfbCZq2aAI7NBO92-aqYRJiS0aVY"
-LICENSE_KEY = "1234-5678-9012-3456"  # Clé de licence fixe
+LICENSE_KEY = "8264-5578-9024-3451"  # Clé de licence fixe
 MONITORING_GROUP_ID = -4923040398
 
 # Configuration du logging
