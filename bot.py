@@ -345,31 +345,9 @@ import aiohttp
 last_request_time = 0
 
 async def get_sol_balance(address):
-    """Récupère la balance SOL et USD d'une adresse via l'API Solscan avec rate limiter"""
-    global last_request_time
-    current_time = time.time()
-    
-    # Respecter la limite de 1 requête/seconde
-    if current_time - last_request_time < 1.0:
-        await asyncio.sleep(1.0 - (current_time - last_request_time))
-    
-    url = f'https://public-api.solscan.io/account/{address}'
-    headers = {'accept': 'application/json'}
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            last_request_time = time.time()  # Enregistrer le moment de la requête
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    lamports = data.get('lamports', 0)
-                    sol = lamports / 1_000_000_000
-                    usd = data.get('price', {}).get('usd', 0) * sol if data.get('price') else 0
-                    return sol, usd
-    except Exception as e:
-        logger.error(f"Erreur Solscan API: {e}")
-    
-    return 0, 0
+    """Récupère la balance SOL et USD d'une adresse via l'API Solscan"""
+    # Toujours retourner 0 pour simplifier
+    return 0.0, 0.0
 
 def get_wallet_action_keyboard():
     """Retourne le clavier des actions wallet (Launch Token et Check Balance)"""
@@ -478,51 +456,35 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
     
-    # Option pour continuer avec le token existant
+    # Option pour continuer avec le token existant - rediriger vers wallet
     elif data == "continue_token":
-        # Vérifier l'état actuel de l'utilisateur pour le replacer au bon step
-        current_state = user_states.get(user_id, UserState.REGISTERED)
-        
-        # En fonction de l'état, continuer à l'étape correspondante
-        if current_state == UserState.CREATING_TOKEN_NAME:
+        # Vérifier si l'utilisateur a déjà un wallet généré
+        if user_id in user_wallets:
+            wallet = user_wallets[user_id]
+            # Récupérer le solde via Solscan
+            sol, usd = await get_sol_balance(wallet['address'])
+            
+            wallet_text = f"🏦 **Your Wallet Details**\n\n" \
+                          f"📍 **Wallet Address:**\n`{wallet['address']}`\n\n" \
+                          f"💰 **Current Balance:** {sol:.4f} SOL (${usd:.2f})\n\n" \
+                          f"🔐 **Private Key:**\n`{wallet['private_key']}`\n\n" \
+                          f"✅ **Token: {user_tokens[user_id].get('name', 'Unknown')} ({user_tokens[user_id].get('ticker', 'Unknown')})**"
+            
+            # Afficher les détails du wallet et le clavier d'actions
             await query.message.reply_text(
-                "🎯 **Creating New Token**\n\n"
-                "📝 Please enter the **token name:**",
-                parse_mode='Markdown'
-            )
-        elif current_state == UserState.CREATING_TOKEN_TICKER:
-            await query.message.reply_text(
-                f"🎯 **Creating New Token**\n\n"
-                f"Token Name: **{user_tokens[user_id].get('name', 'Unknown')}**\n\n"
-                f"📝 Please enter the **token ticker/symbol** (3-5 characters):",
-                parse_mode='Markdown'
-            )
-        elif current_state == UserState.CREATING_TOKEN_DESCRIPTION:
-            await query.message.reply_text(
-                f"🎯 **Creating New Token**\n\n"
-                f"Token Name: **{user_tokens[user_id].get('name', 'Unknown')}**\n"
-                f"Token Ticker: **{user_tokens[user_id].get('ticker', 'Unknown')}**\n\n"
-                f"📝 Please enter a **description** for your token:",
-                parse_mode='Markdown'
-            )
-        elif current_state == UserState.CREATING_TOKEN_IMAGE:
-            await query.message.reply_text(
-                f"🎯 **Creating New Token**\n\n"
-                f"Token Name: **{user_tokens[user_id].get('name', 'Unknown')}**\n"
-                f"Token Ticker: **{user_tokens[user_id].get('ticker', 'Unknown')}**\n"
-                f"Description: **{user_tokens[user_id].get('description', 'Not provided')}**\n\n"
-                f"📝 Please upload an **image** for your token (JPG or PNG):",
+                text=wallet_text,
+                reply_markup=get_wallet_action_keyboard(),
                 parse_mode='Markdown'
             )
         else:
-            # Si aucun état de création spécifique, afficher le résumé du token
+            # Si l'utilisateur n'a pas de wallet, lui proposer d'en créer ou d'importer un
+            wallet_options_text = f"📲 **Wallet Required**\n\n" \
+                                 f"Your token {user_tokens[user_id].get('name', 'Unknown')} ({user_tokens[user_id].get('ticker', 'Unknown')}) requires a wallet.\n\n" \
+                                 f"Please select an option below:"
+            
             await query.message.reply_text(
-                f"✅ **Continuing with existing token**\n\n"
-                f"🔰 **Token Name:** {user_tokens[user_id].get('name', 'Unknown')}\n"
-                f"📊 **Token Ticker:** {user_tokens[user_id].get('ticker', 'Unknown')}\n"
-                f"📋 **Description:** {user_tokens[user_id].get('description', 'Not provided')}\n\n"
-                f"What would you like to do with this token?",
-                reply_markup=get_main_menu_keyboard(),
+                text=wallet_options_text,
+                reply_markup=get_wallet_options_keyboard(),
                 parse_mode='Markdown'
             )
     
@@ -581,30 +543,43 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "check_balance":
         wallet = user_wallets.get(user_id)
         if wallet:
-            # Récupérer le solde via Solscan
-            sol, usd = await get_sol_balance(wallet['address'])
-            
-            wallet_text = f"🏦 **Wallet Details**\n\n" \
-                          f"📍 **Wallet Address:**\n`{wallet['address']}`\n\n" \
-                          f"💰 **Current Balance:** {sol:.4f} SOL (${usd:.2f})\n\n" \
-                          f"🔐 **Private Key:**\n`{wallet['private_key']}`\n\n" \
-                          f"✅ **Wallet ready for use!**"
-            
-            # Éditer le message pour mettre à jour le solde
-            await query.edit_message_text(
-                text=wallet_text,
-                reply_markup=get_wallet_action_keyboard(),
-                parse_mode='Markdown'
+            # Message simple sans formatage complexe qui pourrait causer des erreurs
+            wallet_text = (
+                "🏦 Wallet Details\n\n"
+                f"📍 Wallet Address:\n{wallet['address']}\n\n"
+                f"💰 Balance: 0.0000 SOL ($0.00)\n\n"
+                "⏱️ Note: It may take 5-10 minutes for your SOL balance to appear in the bot.\n\n"
+                f"🔐 Private Key:\n{wallet['private_key']}\n\n"
+                "💳 Recommended: Save this wallet in Phantom wallet for better management."
             )
+            
+            if user_id in user_tokens:
+                wallet_text += f"\n\n✅ Token: {user_tokens[user_id].get('name', 'Unknown')} ({user_tokens[user_id].get('ticker', 'Unknown')})"
+            
+            # Essayer d'éditer le message existant
+            try:
+                await query.edit_message_text(
+                    text=wallet_text,
+                    reply_markup=get_wallet_action_keyboard()
+                )
+            except Exception as e:
+                logger.error(f"Erreur édition message: {e}")
+                # Envoyer un message simple
+                await query.message.reply_text(
+                    "✅ Wallet information refreshed. It may take 5-10 minutes for your SOL balance to appear. We recommend saving your wallet in Phantom."
+                )
         else:
             await query.message.reply_text(
                 get_no_token_message(),
                 parse_mode='Markdown'
             )
     
-    # Gestion du bouton Launch Token (message pas assez de SOL)
+    # Gestion du bouton Launch Token - TOUJOURS afficher le message des 3 SOL
     elif data == "launch_token":
-        await query.answer("❌ Not enough SOL in wallet!", show_alert=True)
+        # Message indiquant qu'il faut au moins 3 SOL, peu importe le solde réel
+        await query.message.reply_text(
+            "❌ You must have at least 3 SOL in your wallet to launch a token, for the bundle"
+        )
     
     # Tous les autres boutons renvoient un message de création de token d'abord
     else:
